@@ -13,7 +13,6 @@ import streamlit as st
 
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 
-
 # =========================================================
 # HELPERS
 # =========================================================
@@ -53,7 +52,6 @@ def get_transcript(url):
     from youtube_transcript_api import YouTubeTranscriptApi
 
     video_id = get_video_id(url)
-
     if not video_id:
         raise ValueError("Invalid YouTube URL.")
 
@@ -161,7 +159,6 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,DejaVu Sans,58,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,1,2,70,70,250,1
-
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
@@ -321,10 +318,10 @@ def cut_video(video_file, start, end, output_file):
     run([
         "ffmpeg",
         "-y",
+            "-i",
+        video_file,
         "-ss",
         str(start),
-        "-i",
-        video_file,
         "-t",
         str(duration),
         "-c:v",
@@ -367,10 +364,15 @@ def add_audio(video_file, audio_file, output_file):
 # =========================================================
 
 def transcript_to_text(transcript):
-    return " ".join(
-        item["text"]
-        for item in transcript
-    )
+    parts = []
+
+    for item in transcript:
+        text = clean_text(item["text"])
+
+        if text:
+            parts.append(text)
+
+    return " ".join(parts)
 
 
 def transcript_to_words(transcript):
@@ -382,19 +384,19 @@ def transcript_to_words(transcript):
         if not text:
             continue
 
+        start = float(item["start"])
+        duration = float(item["duration"])
+
         pieces = text.split()
 
         if not pieces:
             continue
 
-        start = float(item["start"])
-        duration = float(item["duration"])
-
-        step = duration / len(pieces)
+        word_duration = duration / len(pieces)
 
         for index, word in enumerate(pieces):
-            word_start = start + index * step
-            word_end = start + (index + 1) * step
+            word_start = start + index * word_duration
+            word_end = word_start + word_duration
 
             words.append({
                 "text": word,
@@ -406,23 +408,18 @@ def transcript_to_words(transcript):
 
 
 def save_transcript(transcript, output_file):
+    text = transcript_to_text(transcript)
+
     with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(
-            transcript,
-            f,
-            ensure_ascii=False,
-            indent=2
-        )
+        f.write(text)
 
 
 # =========================================================
-# TEMP DIRECTORY
+# WORK DIRECTORY
 # =========================================================
 
 def make_workdir():
-    return tempfile.mkdtemp(
-        prefix="streamlit_video_"
-    )
+    return tempfile.mkdtemp(prefix="shorts_maker_")
 
 
 # =========================================================
@@ -436,11 +433,7 @@ st.set_page_config(
 )
 
 st.title("🎬 AI Video Creator")
-
-st.caption(
-    "Download YouTube videos, extract transcripts, "
-    "generate captions, TTS and render vertical videos."
-)
+st.caption("Free YouTube video downloader, transcript, captions and vertical video maker")
 
 
 # =========================================================
@@ -448,36 +441,35 @@ st.caption(
 # =========================================================
 
 with st.sidebar:
-
-    st.header("Settings")
+    st.header("⚙️ Settings")
 
     voice = st.selectbox(
-        "TTS Voice",
+        "Voice",
         [
             "en-US-AriaNeural",
             "en-US-GuyNeural",
             "en-US-JennyNeural",
             "en-US-ChristopherNeural",
-            "en-GB-SoniaNeural",
-            "en-GB-RyanNeural"
+            "en-US-SoniaNeural",
+            "en-US-RyanNeural"
         ]
     )
 
     speed = st.slider(
         "Voice Speed",
-        0.5,
-        1.5,
-        1.0,
+        0.75,
+        1.50,
+        1.00,
         0.05
     )
 
     make_vertical = st.checkbox(
-        "Convert to 9:16",
+        "Make Vertical 9:16",
         value=True
     )
 
     make_captions = st.checkbox(
-        "Burn captions",
+        "Add Captions",
         value=True
     )
 
@@ -487,27 +479,19 @@ with st.sidebar:
 # =========================================================
 
 url = st.text_input(
-    "YouTube URL",
-    placeholder="https://www.youtube.com/watch?v=..."
+    "🔗 YouTube URL",
+    placeholder="Paste YouTube video URL here..."
 )
 
 
 # =========================================================
-# MAIN ACTION
+# PROCESS
 # =========================================================
 
-if st.button(
-    "🚀 Process Video",
-    type="primary",
-    use_container_width=True
-):
+if st.button("🚀 Process Video", type="primary"):
 
     if not url.strip():
         st.error("Please enter a YouTube URL.")
-        st.stop()
-
-    if not get_video_id(url):
-        st.error("Invalid YouTube URL.")
         st.stop()
 
     workdir = make_workdir()
@@ -517,19 +501,9 @@ if st.button(
         "source.mp4"
     )
 
-    vertical_video = os.path.join(
-        workdir,
-        "vertical.mp4"
-    )
-
-    audio_file = os.path.join(
-        workdir,
-        "audio.mp3"
-    )
-
     transcript_file = os.path.join(
         workdir,
-        "transcript.json"
+        "transcript.txt"
     )
 
     subtitle_file = os.path.join(
@@ -537,9 +511,19 @@ if st.button(
         "captions.ass"
     )
 
+    vertical_video = os.path.join(
+        workdir,
+        "vertical.mp4"
+    )
+
     final_file = os.path.join(
         workdir,
         "final.mp4"
+    )
+
+    audio_file = os.path.join(
+        workdir,
+        "voice.mp3"
     )
 
     try:
@@ -549,7 +533,7 @@ if st.button(
         # -------------------------------------------------
 
         with st.status(
-            "Downloading video...",
+            "Downloading YouTube video...",
             expanded=True
         ) as status:
 
@@ -563,8 +547,9 @@ if st.button(
                 state="complete"
             )
 
+
         # -------------------------------------------------
-        # VIDEO INFO
+        # DURATION
         # -------------------------------------------------
 
         duration = get_duration(
@@ -572,24 +557,22 @@ if st.button(
         )
 
         st.success(
-            f"Video duration: {duration:.2f} seconds"
+            f"Video duration: {duration:.1f} seconds"
         )
+
 
         # -------------------------------------------------
         # TRANSCRIPT
         # -------------------------------------------------
 
         with st.status(
-            "Getting transcript...",
+            "Getting YouTube transcript...",
             expanded=True
         ) as status:
 
-            transcript = get_transcript(url)
-
-            if not transcript:
-                raise RuntimeError(
-                    "No transcript was found."
-                )
+            transcript = get_transcript(
+                url
+            )
 
             save_transcript(
                 transcript,
@@ -601,26 +584,24 @@ if st.button(
                 state="complete"
             )
 
-        # -------------------------------------------------
-        # SHOW TRANSCRIPT
-        # -------------------------------------------------
 
         transcript_text = transcript_to_text(
             transcript
         )
 
         with st.expander(
-            "📜 Transcript"
+            "📄 View Transcript"
         ):
             st.write(
                 transcript_text
             )
 
+
         # -------------------------------------------------
         # CAPTIONS
         # -------------------------------------------------
 
-                if make_captions:
+        if make_captions:
 
             with st.status(
                 "Generating captions...",
@@ -640,157 +621,171 @@ if st.button(
                     label="Captions generated.",
                     state="complete"
                 )
-        
 
 
-# -------------------------------------------------
-# VERTICAL VIDEO
-# -------------------------------------------------
+        # -------------------------------------------------
+        # VERTICAL VIDEO
+        # -------------------------------------------------
 
-working_video = source_video
+        working_video = source_video
 
-if make_vertical:
+        if make_vertical:
 
-    with st.status(
-        "Converting video to vertical 9:16...",
-        expanded=True
-    ) as status:
+            with st.status(
+                "Converting video to vertical 9:16...",
+                expanded=True
+            ) as status:
 
-        resize_vertical(
-            source_video,
-            vertical_video
+                resize_vertical(
+                    source_video,
+                    vertical_video
+                )
+
+                working_video = vertical_video
+
+                status.update(
+                    label="Vertical video ready.",
+                    state="complete"
+                )
+
+
+        # -------------------------------------------------
+        # BURN CAPTIONS
+        # -------------------------------------------------
+
+        if make_captions:
+
+            with st.status(
+                "Burning captions...",
+                expanded=True
+            ) as status:
+
+                burn_subtitles(
+                    working_video,
+                    subtitle_file,
+                    final_file
+                )
+
+                working_video = final_file
+
+                status.update(
+                    label="Captions burned.",
+                    state="complete"
+                )
+
+
+        # -------------------------------------------------
+        # FINAL VIDEO
+        # -------------------------------------------------
+
+        if os.path.exists(
+            working_video
+        ):
+
+            st.subheader(
+                "🎥 Final Video"
+            )
+
+            st.video(
+                working_video
+            )
+
+            with open(
+                working_video,
+                "rb"
+            ) as f:
+
+                st.download_button(
+                    "⬇️ Download Final Video",
+                    data=f,
+                    file_name="final_video.mp4",
+                    mime="video/mp4"
+                )
+
+
+        # -------------------------------------------------
+        # TRANSCRIPT DOWNLOAD
+        # -------------------------------------------------
+
+        if os.path.exists(
+            transcript_file
+        ):
+
+            with open(
+                transcript_file,
+                "rb"
+            ) as f:
+
+                st.download_button(
+                    "📄 Download Transcript",
+                    data=f,
+                    file_name="transcript.txt",
+                    mime="text/plain"
+                )
+
+
+        # -------------------------------------------------
+        # TEXT TO SPEECH
+        # -------------------------------------------------
+
+        st.divider()
+
+        st.subheader(
+            "🔊 Text to Speech"
         )
 
-        working_video = vertical_video
+        tts_text = st.text_area(
+            "Text for voice",
+            value=transcript_text,
+            height=180
+        )
 
-        status.update(
-            label="Vertical video ready.",
-            state="complete"
+        if st.button(
+            "🔊 Generate Voice"
+        ):
+
+            with st.spinner(
+                "Generating voice..."
+            ):
+
+                make_tts(
+                    tts_text,
+                    voice,
+                    speed,
+                    audio_file
+                )
+
+            st.success(
+                "Voice generated."
+            )
+
+            with open(
+                audio_file,
+                "rb"
+            ) as f:
+
+                st.download_button(
+                    "⬇️ Download Voice",
+                    data=f,
+                    file_name="voice.mp3",
+                    mime="audio/mpeg"
+                )
+
+
+    except Exception as e:
+
+        st.error(
+            "Processing failed."
+        )
+
+        st.exception(
+            e
         )
 
 
-# -------------------------------------------------
-# BURN CAPTIONS
-# -------------------------------------------------
-
-if make_captions:
-
-    with st.status(
-        "Burning captions...",
-        expanded=True
-    ) as status:
-
-        burn_subtitles(
-            working_video,
-            subtitle_file,
-            final_file
-        )
-
-        working_video = final_file
-
-        status.update(
-            label="Captions burned.",
-            state="complete"
-        )
-
-
-# -------------------------------------------------
-# FINAL VIDEO
-# -------------------------------------------------
-
-if os.path.exists(working_video):
-
-    st.subheader("🎥 Final Video")
-
-    st.video(
-        working_video
-    )
-
-    with open(
-        working_video,
-        "rb"
-    ) as f:
-
-        st.download_button(
-            "⬇️ Download Video",
-            f,
-            file_name="final.mp4",
-            mime="video/mp4",
-            use_container_width=True
-        )
-
-
-# -------------------------------------------------
-# TRANSCRIPT DOWNLOAD
-# -------------------------------------------------
-
-if os.path.exists(transcript_file):
-
-    with open(
-        transcript_file,
-        "rb"
-    ) as f:
-
-        st.download_button(
-            "⬇️ Download Transcript",
-            f,
-            file_name="transcript.json",
-            mime="application/json"
-        )
-
-
-# -------------------------------------------------
-# TTS
-# -------------------------------------------------
-
-st.divider()
-
-st.subheader("🔊 Text to Speech")
-
-tts_text = st.text_area(
-    "Text for voice",
-    value=transcript_text,
-    height=180
-)
-
-if st.button("🔊 Generate Voice"):
-
-    tts_file = os.path.join(
-        workdir,
-        "voice.mp3"
-    )
-
-    with st.spinner(
-        "Generating voice..."
-    ):
-
-        make_tts(
-            tts_text,
-            voice,
-            speed,
-            tts_file
-        )
-
-    st.success(
-        "Voice generated successfully."
-    )
-
-    with open(
-        tts_file,
-        "rb"
-    ) as f:
-
-        st.download_button(
-            "⬇️ Download Voice",
-            f,
-            file_name="voice.mp3",
-            mime="audio/mpeg"
-        )
-
-
-# -------------------------------------------------
+# =========================================================
 # FOOTER
-# -------------------------------------------------
+# =========================================================
 
 st.divider()
 
