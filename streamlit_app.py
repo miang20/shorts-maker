@@ -622,7 +622,7 @@ if st.button(
 
         if make_captions:
 
-    with st.status(
+        with st.status(
         "Generating captions...",
         expanded=True
     ) as status:
