@@ -1,46 +1,42 @@
 import os
 import re
+import json
+import math
 import asyncio
 import subprocess
 import tempfile
 import streamlit as st
 
-
-# ============================================================
-# SETTINGS
-# ============================================================
+# =========================================================
+# CONFIG
+# =========================================================
 
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 
+# =========================================================
+# HELPERS
+# =========================================================
 
-# ============================================================
-# RUN COMMAND
-# ============================================================
-
-def run(cmd, cwd=None):
+def run(cmd):
     result = subprocess.run(
         cmd,
-        capture_output=True,
-        text=True,
-        cwd=cwd
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
     )
 
     if result.returncode != 0:
-        raise RuntimeError(result.stderr[-1500:])
+        raise RuntimeError(result.stderr[-4000:])
 
-    return result.stdout
+    return result.stdout.strip()
 
-
-# ============================================================
-# YOUTUBE VIDEO ID
-# ============================================================
 
 def get_video_id(url):
     patterns = [
-        r"(?:v=)([\w-]{11})",
-        r"(?:youtu\.be/)([\w-]{11})",
-        r"(?:shorts/)([\w-]{11})",
-        r"(?:embed/)([\w-]{11})",
+        r"youtu\.be/([^?&]+)",
+        r"youtube\.com/watch\?v=([^?&]+)",
+        r"youtube\.com/shorts/([^?&]+)",
+        r"youtube\.com/embed/([^?&]+)"
     ]
 
     for pattern in patterns:
@@ -49,200 +45,199 @@ def get_video_id(url):
         if match:
             return match.group(1)
 
-    raise ValueError("Valid YouTube link nahi mili.")
+    return None
 
-
-# ============================================================
-# YOUTUBE TRANSCRIPT
-# ============================================================
 
 def get_transcript(url):
+    from youtube_transcript_api import YouTubeTranscriptApi
 
     video_id = get_video_id(url)
 
-    from youtube_transcript_api import YouTubeTranscriptApi
+    if not video_id:
+        raise ValueError("Invalid YouTube URL.")
 
     api = YouTubeTranscriptApi()
 
-    try:
-        data = api.fetch(video_id)
+    transcript = api.fetch(video_id)
 
-        result = []
+    items = []
 
-        for item in data:
+    for item in transcript:
+        if hasattr(item, "text"):
+            text = item.text
+            start = float(item.start)
+            duration = float(item.duration)
+        else:
+            text = item["text"]
+            start = float(item["start"])
+            duration = float(item["duration"])
 
-            text = getattr(item, "text", "")
-            start = float(getattr(item, "start", 0))
-            dur = float(getattr(item, "duration", 0))
+        text = str(text).replace("\n", " ").strip()
 
-            if text.strip():
+        if text:
+            items.append({
+                "text": text,
+                "start": start,
+                "duration": duration
+            })
 
-                result.append({
-                    "text": text.strip(),
-                    "start": start,
-                    "duration": dur
-                })
+    return items
 
-        if result:
-            return result
-
-    except Exception:
-        pass
-
-    # Older youtube-transcript-api compatibility
-    try:
-
-        data = YouTubeTranscriptApi.get_transcript(
-            video_id
-        )
-
-        result = []
-
-        for item in data:
-
-            text = item.get("text", "")
-            start = float(item.get("start", 0))
-            dur = float(item.get("duration", 0))
-
-            if text.strip():
-
-                result.append({
-                    "text": text.strip(),
-                    "start": start,
-                    "duration": dur
-                })
-
-        return result
-
-    except Exception as e:
-
-        raise RuntimeError(
-            "YouTube transcript nahi mil saka. "
-            "Transcript manually paste karo."
-        ) from e
-
-
-# ============================================================
-# TEXT CLEANING
-# ============================================================
 
 def clean_text(text):
-
-    text = re.sub(
-        r"[^]+\]",
-        "",
-        text
-    )
-
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    )
-
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
-# ============================================================
-# SENTENCES
-# ============================================================
+def split_sentences(text):
+    text = clean_text(text)
 
-def split_sentences(items):
-
-    result = []
-
-    for item in items:
-
-        text = clean_text(
-            item["text"]
-        )
-
-        pieces = re.split(
-            r"(?<=[.!?])\s+",
-            text
-        )
-
-        for piece in pieces:
-
-            piece = piece.strip()
-
-            if not piece:
-                continue
-
-            result.append({
-                "text": piece,
-                "start": item["start"],
-                "duration": item["duration"]
-            })
-
-    return result
-
-
-# ============================================================
-# PROFANITY MASK
-# ============================================================
-
-CURSE = re.compile(
-    r"(shit|fuck|bitch|asshole|bastard|dick|cunt)",
-    re.I
-)
-
-
-def mask(text):
-
-    def replace(match):
-
-        word = match.group(1)
-
-        if len(word) <= 2:
-            return "*" * len(word)
-
-        return (
-            word[0]
-            + "*" * (len(word) - 2)
-            + word[-1]
-        )
-
-    return CURSE.sub(
-        replace,
+    parts = re.split(
+        r"(?<=[.!?])\s+",
         text
     )
 
+    return [
+        x.strip()
+        for x in parts
+        if len(x.strip()) > 8
+    ]
 
-# ============================================================
-# TIMESTAMP
-# ============================================================
 
-def ts(seconds):
+def mask_profanity(text):
+    bad_words = [
+        "fuck",
+        "fucking",
+        "shit",
+        "bitch",
+        "asshole",
+        "motherfucker",
+        "damn"
+    ]
 
-    seconds = max(
-        float(seconds),
-        0
-    )
+    for word in bad_words:
+        pattern = re.compile(
+            r"\b" + re.escape(word) + r"\b",
+            re.IGNORECASE
+        )
 
-    hours = int(
-        seconds // 3600
-    )
+        text = pattern.sub(
+            lambda m: m.group(0)[0] + "*" * (len(m.group(0)) - 1),
+            text
+        )
 
-    minutes = int(
-        (seconds % 3600) // 60
-    )
+    return text
 
+
+# =========================================================
+# ASS CAPTIONS
+# =========================================================
+
+def ass_time(seconds):
+    seconds = max(0, float(seconds))
+
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
     secs = seconds % 60
 
-    return (
-        f"{hours}:"
-        f"{minutes:02d}:"
-        f"{secs:05.2f}"
+    whole = int(secs)
+    centis = int(round((secs - whole) * 100))
+
+    if centis >= 100:
+        whole += 1
+        centis = 0
+
+    return f"{hours}:{minutes:02d}:{whole:02d}.{centis:02d}"
+
+
+def make_ass(words, output_file):
+    header = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,58,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,1,2,70,70,250,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+    lines = [header]
+
+    for item in words:
+        start = ass_time(item["start"])
+        end = ass_time(item["end"])
+
+        text = mask_profanity(item["text"])
+        text = text.replace("{", r"\{").replace("}", r"\}")
+
+        lines.append(
+            f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}"
+        )
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+
+# =========================================================
+# EDGE TTS
+# =========================================================
+
+async def edge_tts_generate(text, voice, rate, output_file):
+    import edge_tts
+
+    communicate = edge_tts.Communicate(
+        text,
+        voice,
+        rate=rate
+    )
+
+    await communicate.save(output_file)
+
+
+def make_tts(text, voice, speed, output_file):
+    rate = int((speed - 1) * 100)
+
+    if rate >= 0:
+        rate_string = f"+{rate}%"
+    else:
+        rate_string = f"{rate}%"
+
+    asyncio.run(
+        edge_tts_generate(
+            text,
+            voice,
+            rate_string,
+            output_file
+        )
     )
 
 
-# ============================================================
-# ASS CAPTIONS
-# ============================================================
+# =========================================================
+# VIDEO HELPERS
+# =========================================================
 
-def build_ass(words):
+def get_duration(video_file):
+    output = run([
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        video_file
+    ])
 
-    header = (
-        "[Script Info]\n"
-        "ScriptType: v
+    return float(output)
+
+
+def download_youtube(url, output_file):
+    run([
+        "yt-dlp",
+        "--no-playlist",
+        "-f",
+        "best
