@@ -1,7 +1,7 @@
 import os, re, json, sys, subprocess, textwrap, tempfile, requests
 import streamlit as st
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.8-flash"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 GEMINI_KEY = st.secrets.get("GEMINI_KEY", "")
 PIXABAY_KEY = st.secrets.get("PIXABAY_KEY", "")
