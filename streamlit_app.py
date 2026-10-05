@@ -13,6 +13,7 @@ import streamlit as st
 
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 
+
 # =========================================================
 # HELPERS
 # =========================================================
@@ -240,4 +241,383 @@ def download_youtube(url, output_file):
         "yt-dlp",
         "--no-playlist",
         "-f",
-        "best
+        "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "--merge-output-format",
+        "mp4",
+        "-o",
+        output_file,
+        url
+    ])
+
+
+def extract_audio(video_file, audio_file):
+    run([
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_file,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "44100",
+        "-c:a",
+        "mp3",
+        audio_file
+    ])
+
+
+def burn_subtitles(video_file, subtitle_file, output_file):
+    escaped_subtitle = subtitle_file.replace("\\", "/")
+    escaped_subtitle = escaped_subtitle.replace(":", r"\:")
+
+    run([
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_file,
+        "-vf",
+        f"ass='{escaped_subtitle}'",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        output_file
+    ])
+
+
+def resize_vertical(video_file, output_file):
+    run([
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_file,
+        "-vf",
+        "scale=1080:1920:force_original_aspect_ratio=decrease,"
+        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        output_file
+    ])
+
+
+def cut_video(video_file, start, end, output_file):
+    duration = max(0.1, float(end) - float(start))
+
+    run([
+        "ffmpeg",
+        "-y",
+        "-ss",
+        str(start),
+        "-i",
+        video_file,
+        "-t",
+        str(duration),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        output_file
+    ])
+
+
+def add_audio(video_file, audio_file, output_file):
+    run([
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_file,
+        "-i",
+        audio_file,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-shortest",
+        output_file
+    ])
+
+
+# =========================================================
+# TRANSCRIPT HELPERS
+# =========================================================
+
+def transcript_to_text(transcript):
+    return " ".join(
+        item["text"]
+        for item in transcript
+    )
+
+
+def transcript_to_words(transcript):
+    words = []
+
+    for item in transcript:
+        text = clean_text(item["text"])
+
+        if not text:
+            continue
+
+        pieces = text.split()
+
+        if not pieces:
+            continue
+
+        start = float(item["start"])
+        duration = float(item["duration"])
+
+        step = duration / len(pieces)
+
+        for index, word in enumerate(pieces):
+            word_start = start + index * step
+            word_end = start + (index + 1) * step
+
+            words.append({
+                "text": word,
+                "start": word_start,
+                "end": word_end
+            })
+
+    return words
+
+
+def save_transcript(transcript, output_file):
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(
+            transcript,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
+
+
+# =========================================================
+# TEMP DIRECTORY
+# =========================================================
+
+def make_workdir():
+    return tempfile.mkdtemp(
+        prefix="streamlit_video_"
+    )
+
+
+# =========================================================
+# STREAMLIT UI
+# =========================================================
+
+st.set_page_config(
+    page_title="AI Video Creator",
+    page_icon="🎬",
+    layout="wide"
+)
+
+st.title("🎬 AI Video Creator")
+
+st.caption(
+    "Download YouTube videos, extract transcripts, "
+    "generate captions, TTS and render vertical videos."
+)
+
+
+# =========================================================
+# SIDEBAR
+# =========================================================
+
+with st.sidebar:
+
+    st.header("Settings")
+
+    voice = st.selectbox(
+        "TTS Voice",
+        [
+            "en-US-AriaNeural",
+            "en-US-GuyNeural",
+            "en-US-JennyNeural",
+            "en-US-ChristopherNeural",
+            "en-GB-SoniaNeural",
+            "en-GB-RyanNeural"
+        ]
+    )
+
+    speed = st.slider(
+        "Voice Speed",
+        0.5,
+        1.5,
+        1.0,
+        0.05
+    )
+
+    make_vertical = st.checkbox(
+        "Convert to 9:16",
+        value=True
+    )
+
+    make_captions = st.checkbox(
+        "Burn captions",
+        value=True
+    )
+
+
+# =========================================================
+# INPUT
+# =========================================================
+
+url = st.text_input(
+    "YouTube URL",
+    placeholder="https://www.youtube.com/watch?v=..."
+)
+
+
+# =========================================================
+# MAIN ACTION
+# =========================================================
+
+if st.button(
+    "🚀 Process Video",
+    type="primary",
+    use_container_width=True
+):
+
+    if not url.strip():
+        st.error("Please enter a YouTube URL.")
+        st.stop()
+
+    if not get_video_id(url):
+        st.error("Invalid YouTube URL.")
+        st.stop()
+
+    workdir = make_workdir()
+
+    source_video = os.path.join(
+        workdir,
+        "source.mp4"
+    )
+
+    vertical_video = os.path.join(
+        workdir,
+        "vertical.mp4"
+    )
+
+    audio_file = os.path.join(
+        workdir,
+        "audio.mp3"
+    )
+
+    transcript_file = os.path.join(
+        workdir,
+        "transcript.json"
+    )
+
+    subtitle_file = os.path.join(
+        workdir,
+        "captions.ass"
+    )
+
+    final_file = os.path.join(
+        workdir,
+        "final.mp4"
+    )
+
+    try:
+
+        # -------------------------------------------------
+        # DOWNLOAD
+        # -------------------------------------------------
+
+        with st.status(
+            "Downloading video...",
+            expanded=True
+        ) as status:
+
+            download_youtube(
+                url,
+                source_video
+            )
+
+            status.update(
+                label="Video downloaded.",
+                state="complete"
+            )
+
+        # -------------------------------------------------
+        # VIDEO INFO
+        # -------------------------------------------------
+
+        duration = get_duration(
+            source_video
+        )
+
+        st.success(
+            f"Video duration: {duration:.2f} seconds"
+        )
+
+        # -------------------------------------------------
+        # TRANSCRIPT
+        # -------------------------------------------------
+
+        with st.status(
+            "Getting transcript...",
+            expanded=True
+        ) as status:
+
+            transcript = get_transcript(url)
+
+            if not transcript:
+                raise RuntimeError(
+                    "No transcript was found."
+                )
+
+            save_transcript(
+                transcript,
+                transcript_file
+            )
+
+            status.update(
+                label="Transcript ready.",
+                state="complete"
+            )
+
+        # -------------------------------------------------
+        # SHOW TRANSCRIPT
+        # -------------------------------------------------
+
+        transcript_text = transcript_to_text(
+            transcript
+        )
+
+        with st.expander(
+            "📜 Transcript"
+        ):
+            st.write(
+                transcript_text
+            )
+
+        # -------------------------------------------------
+        # CAPTIONS
+        # -------------------------------------------------
+
+        if make_capt
