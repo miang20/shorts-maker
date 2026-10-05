@@ -620,4 +620,179 @@ if st.button(
         # CAPTIONS
         # -------------------------------------------------
 
-        if make_capt
+        if make_captions:
+
+    with st.status(
+        "Generating captions...",
+        expanded=True
+    ) as status:
+
+        words = transcript_to_words(
+            transcript
+        )
+
+        make_ass(
+            words,
+            subtitle_file
+        )
+
+        status.update(
+            label="Captions generated.",
+            state="complete"
+        )
+
+
+# -------------------------------------------------
+# VERTICAL VIDEO
+# -------------------------------------------------
+
+working_video = source_video
+
+if make_vertical:
+
+    with st.status(
+        "Converting video to vertical 9:16...",
+        expanded=True
+    ) as status:
+
+        resize_vertical(
+            source_video,
+            vertical_video
+        )
+
+        working_video = vertical_video
+
+        status.update(
+            label="Vertical video ready.",
+            state="complete"
+        )
+
+
+# -------------------------------------------------
+# BURN CAPTIONS
+# -------------------------------------------------
+
+if make_captions:
+
+    with st.status(
+        "Burning captions...",
+        expanded=True
+    ) as status:
+
+        burn_subtitles(
+            working_video,
+            subtitle_file,
+            final_file
+        )
+
+        working_video = final_file
+
+        status.update(
+            label="Captions burned.",
+            state="complete"
+        )
+
+
+# -------------------------------------------------
+# FINAL VIDEO
+# -------------------------------------------------
+
+if os.path.exists(working_video):
+
+    st.subheader("🎥 Final Video")
+
+    st.video(
+        working_video
+    )
+
+    with open(
+        working_video,
+        "rb"
+    ) as f:
+
+        st.download_button(
+            "⬇️ Download Video",
+            f,
+            file_name="final.mp4",
+            mime="video/mp4",
+            use_container_width=True
+        )
+
+
+# -------------------------------------------------
+# TRANSCRIPT DOWNLOAD
+# -------------------------------------------------
+
+if os.path.exists(transcript_file):
+
+    with open(
+        transcript_file,
+        "rb"
+    ) as f:
+
+        st.download_button(
+            "⬇️ Download Transcript",
+            f,
+            file_name="transcript.json",
+            mime="application/json"
+        )
+
+
+# -------------------------------------------------
+# TTS
+# -------------------------------------------------
+
+st.divider()
+
+st.subheader("🔊 Text to Speech")
+
+tts_text = st.text_area(
+    "Text for voice",
+    value=transcript_text,
+    height=180
+)
+
+if st.button("🔊 Generate Voice"):
+
+    tts_file = os.path.join(
+        workdir,
+        "voice.mp3"
+    )
+
+    with st.spinner(
+        "Generating voice..."
+    ):
+
+        make_tts(
+            tts_text,
+            voice,
+            speed,
+            tts_file
+        )
+
+    st.success(
+        "Voice generated successfully."
+    )
+
+    with open(
+        tts_file,
+        "rb"
+    ) as f:
+
+        st.download_button(
+            "⬇️ Download Voice",
+            f,
+            file_name="voice.mp3",
+            mime="audio/mpeg"
+        )
+
+
+# -------------------------------------------------
+# FOOTER
+# -------------------------------------------------
+
+st.divider()
+
+st.caption(
+    "Shorts Maker • Free processing"
+)
