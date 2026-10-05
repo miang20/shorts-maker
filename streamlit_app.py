@@ -620,26 +620,27 @@ if st.button(
         # CAPTIONS
         # -------------------------------------------------
 
-        if make_captions:
+                if make_captions:
 
-        with st.status(
-        "Generating captions...",
-        expanded=True
-    ) as status:
+            with st.status(
+                "Generating captions...",
+                expanded=True
+            ) as status:
 
-        words = transcript_to_words(
-            transcript
-        )
+                words = transcript_to_words(
+                    transcript
+                )
 
-        make_ass(
-            words,
-            subtitle_file
-        )
+                make_ass(
+                    words,
+                    subtitle_file
+                )
 
-        status.update(
-            label="Captions generated.",
-            state="complete"
-        )
+                status.update(
+                    label="Captions generated.",
+                    state="complete"
+                )
+        
 
 
 # -------------------------------------------------
