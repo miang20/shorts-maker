@@ -1,5 +1,4 @@
 streamlit
+yt-dlp
 youtube-transcript-api
 edge-tts
-google-genai
-requests
